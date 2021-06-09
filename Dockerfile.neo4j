@@ -1,0 +1,131 @@
+FROM ovhcom/ai-training-one-for-all
+
+RUN chsh -s /bin/bash
+ENV SHELL=/bin/bash
+RUN rm /bin/sh && ln -s /bin/bash /bin/sh
+
+RUN curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+
+RUN apt-get update && apt-get install -y \
+    man \
+    vim \
+    nano \
+    htop \
+    curl \
+    wget \
+    rsync \
+    ca-certificates \
+    git \
+    zip \
+    procps \
+    ssh \
+    supervisor \
+    gettext-base \
+    && rm -rf /var/lib/apt/lists/*
+
+# install nvm
+# https://github.com/creationix/nvm#install-script
+RUN curl --silent -o- https://raw.githubusercontent.com/creationix/nvm/v0.33.11/install.sh | bash
+
+ENV NVM_DIR /root/.nvm
+ENV NODE_VERSION v12.20.1
+
+# install node and npm
+RUN source $NVM_DIR/nvm.sh \
+    && nvm install $NODE_VERSION \
+    && nvm alias default $NODE_VERSION \
+    && nvm use default
+
+# add node and npm to path so the commands are available
+ENV NODE_PATH $NVM_DIR/versions/node/$NODE_VERSION/bin
+ENV PATH $NODE_PATH:$PATH
+
+# Install VSCode Server
+RUN wget --quiet https://github.com/cdr/code-server/releases/download/v3.5.0/code-server_3.5.0_amd64.deb && \
+    dpkg -i code-server_3.5.0_amd64.deb && rm -rf code-server_3.5.0_amd64.deb && \
+    rm -f code-server_3.5.0_amd64.deb && \
+    /usr/bin/code-server --install-extension ms-python.python --force
+
+COPY vscode.sh /usr/bin/vscode.sh
+EXPOSE 8081
+
+# Install Jupyter
+RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+RUN python get-pip.py --force-reinstall
+RUN pip install pip==20.3.4
+RUN pip install jupyterlab==2.2.9 ipywidgets==7.6.3
+RUN jupyter labextension install @jupyter-widgets/jupyterlab-manager
+RUN jupyter nbextension enable --py widgetsnbextension #enable ipywidgets
+COPY jupyter.sh /usr/bin/jupyter.sh
+EXPOSE 8082
+
+
+# Add R to Jupyter Kernel
+RUN conda install -y -c r r-irkernel r-essentials
+
+# Home server
+COPY home-server.sh /usr/bin/home-server.sh
+RUN mkdir -p /usr/opt/
+#RUN chown 42420:42420 /usr/opt/
+COPY home-server.html /usr/bin/home-server.html
+EXPOSE 8080
+
+# MOTD
+COPY motd.sh /usr/bin/motd.sh
+
+
+WORKDIR /workspace
+RUN chown -R 42420:42420 /workspace
+#RUN chown -R 42420:42420 /opt/conda
+
+COPY supervisor-neo4j.conf /etc/supervisor/supervisor.conf
+
+RUN pip install neo4j py2neo
+#Directories in use:
+#  home:         /opt/neo4j
+#  config:       /opt/neo4j/conf
+#  logs:         /opt/neo4j/logs
+#  plugins:      /opt/neo4j/plugins
+#  import:       NOT SET
+#  data:         /opt/neo4j/data
+#  certificates: /opt/neo4j/certificates
+#  run:          /opt/neo4j/run
+
+RUN apt-get update && apt-get install -y \
+    apt-transport-https \
+    ca-certificates \
+    curl \
+    software-properties-common 
+
+
+RUN touch /etc/apt/apt.conf.d/99verify-peer.conf \
+&& echo >>/etc/apt/apt.conf.d/99verify-peer.conf "Acquire { https::Verify-Peer false }"
+
+RUN curl -fsSL https://debian.neo4j.com/neotechnology.gpg.key | apt-key add - 
+RUN echo 'deb https://debian.neo4j.com stable latest' | tee /etc/apt/sources.list.d/neo4j.list
+
+RUN apt-get update && \
+    apt-get install -y neo4j && \
+    systemctl enable neo4j.service
+
+RUN mkdir -p /var/logs
+RUN chown -R 42420:42420 /var/logs 
+RUN chown -R 42420:42420 /opt/conda
+RUN chown -R 42420:42420 /usr/opt
+
+COPY neo4j.conf /etc/neo4j/
+
+RUN mkdir -p /workspace/neo4j/data
+
+RUN chown -R 42420:42420 /var/run/neo4j && \
+    chown -R 42420:42420 /var/lib/neo4j && \
+    chown -R 42420:42420 /var/log && \
+    chown -R 42420:42420 /etc/neo4j && \ 
+    chown -R 42420:42420 /workspace/neo4j/data
+
+COPY run_all_neo4j.sh /usr/bin/run_all_neo4j
+
+RUN chmod +x /usr/bin/run_all_neo4j
+RUN chown -R 42420:42420 /usr/bin/run_all_neo4j
+
+CMD ["run_all_neo4j"]
